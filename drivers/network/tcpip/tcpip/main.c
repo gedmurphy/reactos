@@ -12,6 +12,7 @@
 
 #include <dispatch.h>
 #include <fileobjs.h>
+#include <tcpip_shared.h>
 
 PDEVICE_OBJECT TCPDeviceObject   = NULL;
 PDEVICE_OBJECT UDPDeviceObject   = NULL;
@@ -28,6 +29,7 @@ UDP_STATISTICS UDPStats;
 /* Network timers */
 KTIMER IPTimer;
 KDPC IPTimeoutDpc;
+
 
 VOID TiWriteErrorLog(
     PDRIVER_OBJECT DriverContext,
@@ -369,6 +371,29 @@ TiDispatchOpenClose(
     return IRPFinish( Irp, Status );
 }
 
+NTSTATUS NTAPI
+IPDispatch(
+    PDEVICE_OBJECT DeviceObject,
+    PIRP Irp)
+{
+    NTSTATUS Status;
+    PIO_STACK_LOCATION IrpSp;
+
+    TI_DbgPrint(DEBUG_IRP, ("[TCPIP, IPDispatch] Called. IRP is at (0x%X).\n", Irp));
+
+    IrpSp = IoGetCurrentIrpStackLocation(Irp);
+    Irp->IoStatus.Information = 0;
+
+    /* See if this request is TCP/IP specific */
+    switch (IrpSp->Parameters.DeviceIoControl.IoControlCode)
+    {
+    case IOCTL_ECHO_REQUEST:
+        Status = IpEchoRequest(DeviceObject, Irp);
+        break;
+    }
+
+    return IRPFinish(Irp, Status);
+}
 
 NTSTATUS NTAPI
 TiDispatchInternal(
@@ -416,9 +441,9 @@ TiDispatchInternal(
         Complete = FALSE;
         break;
 
-  case TDI_ACCEPT:
-    Status = DispTdiAccept(Irp);
-    break;
+    case TDI_ACCEPT:
+        Status = DispTdiAccept(Irp);
+        break;
 
     case TDI_LISTEN:
         Status = DispTdiListen(Irp);
@@ -494,6 +519,25 @@ TiDispatch(
     TI_DbgPrint(DEBUG_IRP, ("[TCPIP, TiDispatch] Called. IRP is at (0x%X).\n", Irp));
 
     Irp->IoStatus.Information = 0;
+
+    /* Check if this is a request for the IP device */
+    if (DeviceObject == IPDeviceObject)
+    {
+        return IPDispatch(DeviceObject, Irp);
+    }
+    else if (DeviceObject == UDPDeviceObject)
+    {
+        /* We don't yet handle, nor do we have any internal requests to this device object */
+        TI_DbgPrint(MIN_TRACE, ("Received an IOCTL for the UDP device object\n"));
+        NT_ASSERT(FALSE);
+    }
+    else if (DeviceObject == RawIPDeviceObject)
+    {
+        /* We don't yet handle, nor do we have any internal requests to this device object */
+        TI_DbgPrint(MIN_TRACE, ("Received an IOCTL for the RawIP device object\n"));
+        NT_ASSERT(FALSE);
+    }
+
 
 #if 0
     Status = TdiMapUserRequest(DeviceObject, Irp, IrpSp);
